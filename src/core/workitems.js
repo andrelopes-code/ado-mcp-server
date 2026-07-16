@@ -1,4 +1,4 @@
-const PATCH = { headers: { 'Content-Type': 'application/json-patch+json' } };
+const JSON_PATCH_HEADERS = { headers: { 'Content-Type': 'application/json-patch+json' } };
 
 const PRESETS = {
   my_active: "SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] = @Me AND [System.State] NOT IN ('Closed','Done','Removed','Completed') ORDER BY [System.ChangedDate] DESC",
@@ -40,7 +40,7 @@ async function create({ api, config }, { type, title, fields = {}, parentId }) {
       url: `${config.url}/${encodeURIComponent(config.project)}/_apis/wit/workItems/${parentId}`,
     } });
   }
-  return api.post(`/wit/workitems/$${type}`, ops, PATCH);
+  return api.post(`/wit/workitems/$${type}`, ops, JSON_PATCH_HEADERS);
 }
 
 async function update({ api }, { id, fields = {}, state }) {
@@ -48,11 +48,11 @@ async function update({ api }, { id, fields = {}, state }) {
   if (state) ops.push({ op: 'add', path: '/fields/System.State', value: state });
   for (const [k, v] of Object.entries(fields)) ops.push({ op: 'add', path: `/fields/${k}`, value: v });
   if (!ops.length) throw new Error('Nada para atualizar: informe fields e/ou state.');
-  return api.patch(`/wit/workitems/${id}`, ops, PATCH);
+  return api.patch(`/wit/workitems/${id}`, ops, JSON_PATCH_HEADERS);
 }
 
 async function comment({ api }, { id, text }) {
-  return api.patch(`/wit/workitems/${id}`, [{ op: 'add', path: '/fields/System.History', value: text }], PATCH);
+  return api.patch(`/wit/workitems/${id}`, [{ op: 'add', path: '/fields/System.History', value: text }], JSON_PATCH_HEADERS);
 }
 
 export { query, getMany, getOne, create, update, comment };

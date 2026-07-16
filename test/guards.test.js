@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFile, rm } from 'node:fs/promises';
-import { assertRepoAllowed, isProtectedBranch, runWrite, textResult } from '../src/tools/guards.js';
+import { assertRepoAllowed, isProtectedBranch, runWrite } from '../src/tools/guards.js';
 
 const audit = './test-guards-audit.log';
 afterEach(() => rm(audit, { force: true }));

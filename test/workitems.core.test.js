@@ -39,6 +39,15 @@ describe('workitems core', () => {
     await expect(wit.update({ api: stubApi(), config }, { id: 1 })).rejects.toThrow(/Nada para atualizar/);
   });
 
+  it('update builds a json-patch with state and fields plus the json-patch content-type', async () => {
+    const api = stubApi();
+    await wit.update({ api, config }, { id: 7, state: 'Doing', fields: { 'System.AssignedTo': 'me' } });
+    const call = api.calls.find((c) => c[0] === 'patch' && c[1] === '/wit/workitems/7');
+    expect(call[2]).toContainEqual({ op: 'add', path: '/fields/System.State', value: 'Doing' });
+    expect(call[2]).toContainEqual({ op: 'add', path: '/fields/System.AssignedTo', value: 'me' });
+    expect(call[3].headers['Content-Type']).toBe('application/json-patch+json');
+  });
+
   it('comment posts via System.History', async () => {
     const api = stubApi();
     await wit.comment({ api, config }, { id: 3, text: 'oi' });

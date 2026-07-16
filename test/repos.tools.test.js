@@ -3,7 +3,7 @@ import { registerRepoTools } from '../src/tools/repos.tools.js';
 
 function fakeServer() {
   const tools = {};
-  return { tools, registerTool: (name, cfg, handler) => { tools[name] = { handler }; } };
+  return { tools, registerTool: (name, _cfg, handler) => { tools[name] = { handler }; } };
 }
 const stubApi = { get: async () => ({ value: [{ id: 'a', name: 'app', defaultBranch: 'refs/heads/main' }, { id: 'b', name: 'infra' }] }) };
 

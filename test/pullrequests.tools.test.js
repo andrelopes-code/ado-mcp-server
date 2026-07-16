@@ -7,7 +7,7 @@ afterEach(() => rm(audit, { force: true }));
 
 function fakeServer() {
   const tools = {};
-  return { tools, registerTool: (name, cfg, handler) => { tools[name] = { handler }; } };
+  return { tools, registerTool: (name, _cfg, handler) => { tools[name] = { handler }; } };
 }
 const stubApi = { get: async () => ({ value: [] }), post: async () => ({ pullRequestId: 55 }) };
 const cfg = (over = {}) => ({ project: 'Proj', url: 'u', mode: 'write', repoAllowlist: [], protectedBranches: ['main'], auditLog: audit, ...over });
