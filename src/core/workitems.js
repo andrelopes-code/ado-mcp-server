@@ -5,7 +5,7 @@ const PRESETS = {
   my_recent: "SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] = @Me ORDER BY [System.ChangedDate] DESC",
 };
 
-const DEFAULT_FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AssignedTo'];
+const DEFAULT_FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AssignedTo', 'System.TeamProject'];
 
 async function query({ api, config }, { wiql, preset }) {
   const q = wiql || PRESETS[preset];
@@ -22,11 +22,11 @@ async function getMany({ api }, ids, fields = DEFAULT_FIELDS) {
 }
 
 async function getOne(ctx, id) {
-  const [item] = await getMany(ctx, [id], [...DEFAULT_FIELDS, 'System.TeamProject']);
+  const [item] = await getMany(ctx, [id]);
   if (!item) throw new Error(`Work item ${id} não encontrado.`);
   const proj = item.fields?.['System.TeamProject'];
-  if (proj && proj !== ctx.config.project) {
-    throw new Error(`Work item ${id} pertence ao projeto '${proj}', fora de '${ctx.config.project}'.`);
+  if (proj !== ctx.config.project) {
+    throw new Error(`Work item ${id} pertence ao projeto '${proj ?? 'desconhecido'}', fora de '${ctx.config.project}'.`);
   }
   return item;
 }

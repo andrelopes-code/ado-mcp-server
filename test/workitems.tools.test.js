@@ -34,4 +34,14 @@ describe('wit tools', () => {
     const res = await server.tools.wit_create.handler({ type: 'Task', title: 'X', confirm: true });
     expect(res.content[0].text).toMatch(/APLICADO/);
   });
+
+  it('wit_get rejects ids from another project', async () => {
+    const server = fakeServer();
+    const api = stubApi({ get: () => ({ value: [
+      { id: 3, fields: { 'System.TeamProject': 'Proj' } },
+      { id: 9, fields: { 'System.TeamProject': 'Outro' } },
+    ] }) });
+    registerWorkItemTools(server, { api, config: baseCfg });
+    await expect(server.tools.wit_get.handler({ ids: [3, 9] })).rejects.toThrow(/fora do projeto 'Proj'/);
+  });
 });

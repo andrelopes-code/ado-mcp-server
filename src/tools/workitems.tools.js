@@ -19,7 +19,14 @@ function registerWorkItemTools(server, ctx) {
   server.registerTool('wit_get', {
     description: 'Detalha work items por id. Leitura.',
     inputSchema: { ids: z.array(z.number()).min(1) },
-  }, async ({ ids }) => textResult(JSON.stringify(await wit.getMany(ctx, ids), null, 2)));
+  }, async ({ ids }) => {
+    const items = await wit.getMany(ctx, ids);
+    const foreign = items.filter((it) => it.fields?.['System.TeamProject'] !== ctx.config.project);
+    if (foreign.length) {
+      throw new Error(`Work item(s) fora do projeto '${ctx.config.project}': ${foreign.map((it) => it.id).join(', ')}.`);
+    }
+    return textResult(JSON.stringify(items, null, 2));
+  });
 
   server.registerTool('wit_create', {
     description: 'Cria work item. Escrita: exige ADO_MODE=write e confirm:true.',
