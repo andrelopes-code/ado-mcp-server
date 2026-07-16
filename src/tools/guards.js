@@ -1,4 +1,5 @@
 import { auditWrite } from '../audit.js';
+import { currentMode } from '../config.js';
 
 const fmt = (v) => JSON.stringify(v, null, 2);
 
@@ -19,7 +20,7 @@ function isProtectedBranch(config, ref) {
 }
 
 async function runWrite({ ctx, tool, args, confirm, preview, execute }) {
-  if (ctx.config.mode !== 'write') {
+  if (currentMode(ctx.config.mode, ctx.config.envPath) !== 'write') {
     return textResult(`Escrita BLOQUEADA — ADO_MODE=read. Nada foi enviado.\n\nO que seria feito:\n${fmt(preview)}`, true);
   }
   if (confirm !== true) {

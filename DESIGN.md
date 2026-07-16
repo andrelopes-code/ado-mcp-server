@@ -77,6 +77,10 @@ Não existem tools de `delete`/`abandon`/`complete`/`merge`/`remove`. Se não h�
 ### Camada 3 — Read-only por padrão; escrita é opt-in fora do alcance do Claude
 `.env` nasce com `ADO_MODE=read`. Nesse modo, **toda** tool de escrita recusa com mensagem clara. O humano vira `ADO_MODE=write` só enquanto acompanha ativamente uma tarefa. Servidor default = só lê.
 
+O `ADO_MODE` é relido **ao vivo do `.env` a cada tentativa de escrita** (`currentMode` em `config.js`), então virar o modo vale na próxima chamada — sem reiniciar o processo. Se o `.env` estiver ilegível em runtime, mantém a postura do boot (não derruba a escrita por um erro de leitura). O switch continua num arquivo, fora das tools do Claude.
+
+Na prática, o gate de aprovação por-ação numa sessão interativa é o **prompt de permissão do próprio Claude Code** (pergunta antes de cada tool). `ADO_MODE` é o backstop para sessões autônomas/auto-aprovadas, onde não há humano no loop.
+
 ### Camada 4 — Preview → confirm em toda mutação
 Toda tool de escrita exige `confirm: true`. Sem isso, **não executa**: retorna o preview exato — método, URL, corpo/JSON-patch que enviaria, e os valores atuais dos campos que mudariam. Toda escrita é two-phase e visível; o prompt de permissão do Claude Code dispara na chamada com `confirm`.
 

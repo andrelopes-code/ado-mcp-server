@@ -29,7 +29,7 @@ No Azure DevOps: **User settings → Personal access tokens → New Token**. Esc
 | `DEVOPS_PROJECT` | projeto único |
 | `DEVOPS_PAT` | o PAT mínimo acima |
 | `API_VERSION` | versão da REST API do DevOps on-prem (default `6.0`) |
-| `ADO_MODE` | `read` (default, só lê) \| `write` (habilita mutações) |
+| `ADO_MODE` | `read` (default, só lê) \| `write` (habilita mutações). Relido **ao vivo** do `.env` a cada escrita — trocar vale na próxima chamada, sem reiniciar o server |
 | `ADO_REPO_ALLOWLIST` | repos permitidos, separados por vírgula (vazio = todos) |
 | `ADO_PROTECTED_BRANCHES` | branches sob sinalização reforçada em `pr_create` (default `main,master,develop,release/*`) |
 | `ADO_AUDIT_LOG` | caminho do log de auditoria de escritas (default `./ado-mcp-audit.log`) |
@@ -49,6 +49,16 @@ Verifique: `claude mcp list` deve mostrar `ado`.
 - **Nada destrutivo existe.** Sem delete/abandon/**merge**. O merge de PR é sempre manual no web UI.
 - **Blast radius.** Projeto único; allowlist opcional de repos.
 - **Auditoria.** Toda escrita executada vai para `ado-mcp-audit.log`.
+
+## Modo de escrita e permissões (recomendado)
+
+O gate de aprovação por-ação numa sessão interativa é o **prompt de permissão do próprio Claude Code** — ele pergunta antes de cada tool. Postura recomendada:
+
+- Deixe **`ADO_MODE=write`** fixo (sem editar arquivo no dia a dia).
+- **Não** marque *"don't ask again"* nas tools de **escrita** (`wit_create/update/comment`, `pr_create/add_reviewers/comment`) — deixe-as perguntando. As de leitura pode liberar à vontade.
+- Assim cada escrita para 2×: o preview do server + o seu "Yes" no Claude Code. Nada é enviado sem sua aprovação.
+
+`ADO_MODE=read` é o **backstop para sessões autônomas / auto-aprovadas** (sem humano no loop). Como o modo é relido ao vivo do `.env`, virar para `read` antes de um run desatendido vale na próxima chamada, sem reiniciar.
 
 ## Uso pelo Claude
 

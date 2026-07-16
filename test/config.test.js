@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { isAbsolute } from 'node:path';
-import { readConfig } from '../src/config.js';
+import { writeFileSync, rmSync } from 'node:fs';
+import { readConfig, currentMode } from '../src/config.js';
 
 const base = { DEVOPS_URL: 'http://srv/col/', DEVOPS_PROJECT: 'Proj', DEVOPS_PAT: 'secret' };
 
@@ -40,5 +41,35 @@ describe('readConfig', () => {
     expect(isAbsolute(rel)).toBe(true);
     expect(rel.endsWith('/logs/x.log')).toBe(true);
     expect(readConfig({ ...base, ADO_AUDIT_LOG: '/var/tmp/a.log' }).auditLog).toBe('/var/tmp/a.log');
+  });
+
+  it('exposes the resolved .env path for live mode reload', () => {
+    const c = readConfig(base);
+    expect(isAbsolute(c.envPath)).toBe(true);
+    expect(c.envPath.endsWith('/.env')).toBe(true);
+  });
+});
+
+describe('currentMode (live reload)', () => {
+  const f = './test-live-env';
+  afterEach(() => rmSync(f, { force: true }));
+
+  it('reads ADO_MODE live from the given env file', () => {
+    writeFileSync(f, 'ADO_MODE=write\n');
+    expect(currentMode('read', f)).toBe('write');
+    writeFileSync(f, 'ADO_MODE=read\n');
+    expect(currentMode('read', f)).toBe('read');
+  });
+
+  it('normalizes any non-write value to read', () => {
+    writeFileSync(f, 'ADO_MODE=yolo\n');
+    expect(currentMode('write', f)).toBe('read');
+  });
+
+  it('falls back to the boot mode when the file lacks ADO_MODE, is missing, or no path is given', () => {
+    writeFileSync(f, 'FOO=bar\n');
+    expect(currentMode('write', f)).toBe('write');
+    expect(currentMode('read', './does-not-exist-xyz')).toBe('read');
+    expect(currentMode('write')).toBe('write');
   });
 });
