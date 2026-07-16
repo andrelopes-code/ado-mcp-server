@@ -1,4 +1,9 @@
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'node:url';
+import { resolve, dirname } from 'node:path';
+
+const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+loadEnv({ path: resolve(SERVER_DIR, '.env') });
 
 const REQUIRED = ['DEVOPS_URL', 'DEVOPS_PROJECT', 'DEVOPS_PAT'];
 
@@ -20,7 +25,7 @@ function readConfig(env = process.env) {
     mode: env.ADO_MODE === 'write' ? 'write' : 'read',
     repoAllowlist: splitList(env.ADO_REPO_ALLOWLIST),
     protectedBranches: splitList(env.ADO_PROTECTED_BRANCHES, ['main', 'master', 'develop', 'release/*']),
-    auditLog: env.ADO_AUDIT_LOG || './ado-mcp-audit.log',
+    auditLog: resolve(SERVER_DIR, env.ADO_AUDIT_LOG || 'ado-mcp-audit.log'),
   };
 }
 
