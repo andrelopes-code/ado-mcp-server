@@ -13,7 +13,7 @@ function createApi(config) {
   const token = Buffer.from(`:${config.pat}`).toString('base64');
   const http = axios.create({
     baseURL: `${config.url}/${encodeURIComponent(config.project)}/_apis`,
-    timeout: 30000,
+    timeout: config.timeoutMs ?? 30000,
     headers: { Authorization: `Basic ${token}` },
     params: { 'api-version': config.apiVersion },
   });

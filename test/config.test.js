@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { isAbsolute } from 'node:path';
 import { writeFileSync, rmSync } from 'node:fs';
 import { readConfig, currentMode } from '../src/config.js';
@@ -47,6 +47,23 @@ describe('readConfig', () => {
     const c = readConfig(base);
     expect(isAbsolute(c.envPath)).toBe(true);
     expect(c.envPath.endsWith('/.env')).toBe(true);
+  });
+
+  it('defaults the timeout and accepts a valid override, ignoring junk', () => {
+    expect(readConfig(base).timeoutMs).toBe(30000);
+    expect(readConfig({ ...base, ADO_TIMEOUT_MS: '5000' }).timeoutMs).toBe(5000);
+    expect(readConfig({ ...base, ADO_TIMEOUT_MS: 'abc' }).timeoutMs).toBe(30000);
+    expect(readConfig({ ...base, ADO_TIMEOUT_MS: '-1' }).timeoutMs).toBe(30000);
+  });
+
+  it('warns on stderr when the PAT would travel over plain http, and stays quiet on https', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    readConfig(base);
+    expect(spy).toHaveBeenCalledWith(expect.stringMatching(/http.*sem TLS/));
+    spy.mockClear();
+    readConfig({ ...base, DEVOPS_URL: 'https://srv/col' });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
