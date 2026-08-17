@@ -10,7 +10,7 @@ Servidor MCP local que dá ao Claude Code acesso controlado ao **Azure DevOps Se
 
 ## 1. Contexto e motivação
 
-O Azure DevOps Server on-premise expõe a mesma REST API do serviço em nuvem (`{coleção}/_apis/...`), mas o `az devops` CLI e os MCPs oficiais não suportam on-prem de forma confiável. A REST API, porém, funciona — já existe prova no repositório ASTI (`devops_integracao/services/taskService.js` cria work items com PAT via Basic auth).
+O Azure DevOps Server on-premise expõe a mesma REST API do serviço em nuvem (`{coleção}/_apis/...`), mas o `az devops` CLI e os MCPs oficiais não suportam on-prem de forma confiável. A REST API, porém, funciona: criar work items com PAT via Basic auth contra uma coleção on-prem é comportamento comprovado.
 
 Este projeto é o "MCP confiável de on-prem" que falta: um wrapper fino, tipado e **seguro-por-padrão** sobre essa REST API.
 
@@ -18,8 +18,8 @@ Este projeto é o "MCP confiável de on-prem" que falta: um wrapper fino, tipado
 
 - Dar ao Claude Code tools nativas para o fluxo diário: **work items (cards), pull requests, repos/branches**.
 - Ser **robusto** e **impossível de causar estrago irreversível** no DevOps real.
-- Rodar **isolado** do monorepo ASTI (projeto próprio, `.env` próprio, git próprio).
-- Uso **pessoal**, nesta máquina, sob a conta do André.
+- Rodar **isolado** de qualquer repositório de trabalho (projeto próprio, `.env` próprio, git próprio).
+- Uso **pessoal**, local, sob a conta do próprio desenvolvedor.
 
 ## 3. Não-objetivos (YAGNI)
 
@@ -33,24 +33,31 @@ Este projeto é o "MCP confiável de on-prem" que falta: um wrapper fino, tipado
 Servidor MCP stdio em Node. Separação **core (REST puro) / tools (adaptador MCP)** — o core não conhece MCP e é o ponto de reúso para um futuro CLI ou serviço de time.
 
 ```
-~/dev/ado-mcp-server/            ← isolado do ASTI, git próprio
+~/dev/ado-mcp-server/            ← isolado dos repositórios de trabalho, git próprio
 ├── .env                          (gitignored) segredos + modo
 ├── .env.example                  template documentado
 ├── .gitignore                    ignora .env, node_modules, *.log
+├── eslint.config.js              flat config (eslint 9)
 ├── package.json
+├── LICENSE                       MIT
 ├── README.md                     setup + geração do PAT mínimo + registro no Claude
+├── SECURITY.md                   modelo de ameaças + como reportar vulnerabilidade
 ├── DESIGN.md                     este documento
-├── ado-mcp-audit.log             (gitignored) trilha de toda escrita executada
+├── ado-mcp-audit.log             (gitignored) trilha de toda tentativa de escrita
+├── docs/PLAN.md                  plano de construção original
+├── .github/workflows/ci.yml      lint + testes + npm audit em Node 20 e 22
+├── test/                         vitest, um arquivo por módulo
 └── src/
     ├── index.js                  bootstrap MCP (StdioServerTransport), registra tools
     ├── config.js                 carrega/valida .env; falha barulhenta se faltar segredo
-    ├── audit.js                   append no audit log (timestamp, tool, params, resultado)
+    ├── audit.js                   append no audit log (timestamp, tool, params, outcome) + rotação
     ├── core/                     REST puro — ZERO conhecimento de MCP, reusável
-    │   ├── client.js             axios: base URL, Basic-PAT, api-version, paginação, mapeamento de erro
-    │   ├── workitems.js          query/get/create/update/comment/link
-    │   ├── pullrequests.js       list/get/create/add_reviewers/comment
+    │   ├── client.js             axios: base URL, Basic-PAT, api-version, timeout, mapeamento de erro
+    │   ├── workitems.js          query/get/create/update/comment + escopo de projeto
+    │   ├── pullrequests.js       list/get/create/update/add_reviewers/comment
     │   └── repos.js              list/branches/commits
     └── tools/                    adaptadores MCP finos: schema zod → chama core → aplica guardas
+        ├── guards.js             allowlist, branch protegida, modo/confirm, auditoria
         ├── workitems.tools.js
         ├── pullrequests.tools.js
         └── repos.tools.js
@@ -93,7 +100,7 @@ Toda tool de escrita exige `confirm: true`. Sem isso, **não executa**: retorna 
 `pr_create` **nunca** envia `completionOptions`, autocomplete, `deleteSourceBranch` nem override de policy — o corpo é montado só com source/target/título/descrição/reviewers/work items. Criar PR *para* `main` é normal e permitido (é o propósito do PR); o que não existe em lugar nenhum é merge ou delete. Quando `targetRef` casa `ADO_PROTECTED_BRANCHES` (default `main,master,develop,release/*`), o preview destaca "PR mirando branch protegida" para o humano notar antes do `confirm` — é sinalização, não bloqueio, já que não há mutação da branch.
 
 ### Camada 7 — Audit log local
-Toda escrita executada é anexada em `ado-mcp-audit.log`: timestamp ISO, tool, params (PAT nunca logado), método+URL, id/resultado. Se algo sair errado, você vê exatamente o quê e reverte pelo histórico do ADO (work items têm revisão; PRs reativam; comentários editam).
+Toda tentativa de escrita é anexada em `ado-mcp-audit.log`: timestamp ISO, tool, params (PAT nunca logado), `outcome` (`applied` | `blocked` | `failed`) e o id do resultado. O negado importa tanto quanto o aplicado — uma escrita barrada por `ADO_MODE=read` deixa rastro. Falha ao gravar a trilha nunca mascara uma mutação já enviada: o resultado volta como aplicado, com aviso explícito. O arquivo rotaciona para `.1` ao passar de 5 MB. Se algo sair errado, você vê exatamente o quê e reverte pelo histórico do ADO (work items têm revisão; PRs reativam; comentários editam).
 
 ### Robustez geral
 Validação zod na entrada; timeouts em toda request; retry só em leitura idempotente (nunca em escrita); erros mapeados para mensagens curtas e acionáveis, nunca engolidos; `config.js` falha barulhenta se `DEVOPS_URL`/`DEVOPS_PROJECT`/`DEVOPS_PAT` faltarem.
@@ -105,8 +112,8 @@ Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MO
 ### Work items
 | Tool | Tipo | Params principais | Guardas |
 |---|---|---|---|
-| `wit_query` | R | `wiql` (string) **ou** `preset` (`my_active`/`my_recent`) | — |
-| `wit_get` | R | `ids` (array), `fields?` | recusa id fora do projeto |
+| `wit_query` | R | `wiql` (string) **ou** `preset` (`my_active`/`my_recent`) | recusa resultado fora do projeto |
+| `wit_get` | R | `ids` (array, máx. 200), `fields?` | recusa id fora do projeto |
 | `wit_create` | W | `type`, `title`, `fields?`, `parentId?` | confirm; sem bulk |
 | `wit_update` | W | `id`, `fields?`, `state?` | confirm; 1 item; recusa id fora do projeto; sem delete |
 | `wit_comment` | W | `id`, `text` | confirm; via `System.History` (estável em qualquer api-version) |
@@ -116,11 +123,12 @@ Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MO
 |---|---|---|---|
 | `pr_list` | R | `repo`, `status?` (`active`/`completed`/`abandoned`), `creator?`, `target?` | allowlist de repo |
 | `pr_get` | R | `repo`, `prId` | allowlist de repo |
-| `pr_create` | W | `repo`, `sourceRef`, `targetRef`, `title`, `description?`, `reviewers?`, `workItemIds?` | confirm; allowlist; **não faz merge** |
+| `pr_create` | W | `repo`, `sourceRef`, `targetRef`, `title`, `description?`, `reviewers?`, `workItemIds?`, `isDraft?` | confirm; allowlist; **não faz merge** |
+| `pr_update` | W | `repo`, `prId`, `title?`, `description?`, `isDraft?`, `target?` | confirm; allowlist; **nunca envia `status`** |
 | `pr_add_reviewers` | W | `repo`, `prId`, `reviewers` | confirm; allowlist |
 | `pr_comment` | W | `repo`, `prId`, `text`, `thread?` | confirm; allowlist |
 
-> **Ausente por decisão de design:** `pr_complete`, `pr_abandon`.
+> **Ausente por decisão de design:** `pr_complete`, `pr_abandon`. `pr_update` edita metadados e nada mais: o mesmo `PATCH` da API aceita `status: abandoned` (fecha) e `status: completed` (mergeia), então o campo simplesmente não é montado.
 
 ### Repos / branches
 | Tool | Tipo | Params principais | Guardas |
@@ -141,16 +149,17 @@ Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MO
 | `ADO_REPO_ALLOWLIST` | vazio (todos) | lista separada por vírgula de repos permitidos |
 | `ADO_PROTECTED_BRANCHES` | `main,master,develop,release/*` | branches sob guarda reforçada |
 | `ADO_AUDIT_LOG` | `./ado-mcp-audit.log` | caminho da trilha de auditoria |
+| `ADO_TIMEOUT_MS` | `30000` | timeout das chamadas HTTP em ms |
 
-`.env`, `*.log` e `node_modules` no `.gitignore`. Nenhum segredo entra em `.mcp.json` nem no repo ASTI.
+`.env`, `*.log` e `node_modules` no `.gitignore`. Nenhum segredo entra em `.mcp.json` nem em qualquer repositório de trabalho.
 
 ## 8. Registro no Claude Code (user scope)
 
 ```bash
-claude mcp add --scope user ado -- node /home/dreco/dev/ado-mcp-server/src/index.js
+claude mcp add --scope user ado -- node ~/dev/ado-mcp-server/src/index.js
 ```
 
-User scope → disponível em todos os projetos/worktrees; a config fica em `~/.claude.json`, longe do repo ASTI. As tools de escrita continuam sujeitas ao prompt de permissão do Claude Code (segunda barreira além do `ADO_MODE`).
+User scope → disponível em todos os projetos/worktrees; a config fica em `~/.claude.json`, fora dos repositórios de trabalho. As tools de escrita continuam sujeitas ao prompt de permissão do Claude Code (segunda barreira além do `ADO_MODE`).
 
 ## 9. Stack
 

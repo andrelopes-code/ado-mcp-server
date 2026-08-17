@@ -1360,7 +1360,7 @@ No Azure DevOps: **User settings → Personal access tokens → New Token**. Esc
 ## Registrar no Claude Code (user scope)
 
 ```bash
-claude mcp add --scope user ado -- node /home/dreco/dev/ado-mcp-server/src/index.js
+claude mcp add --scope user ado -- node ~/dev/ado-mcp-server/src/index.js
 ```
 
 Verifique: `claude mcp list` deve mostrar `ado`.
