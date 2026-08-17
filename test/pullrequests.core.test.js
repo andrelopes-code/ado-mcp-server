@@ -3,7 +3,12 @@ import * as pr from '../src/core/pullrequests.js';
 
 function stubApi() {
   const calls = [];
-  return { calls, get: async (...a) => (calls.push(['get', ...a]), { value: [] }), post: async (...a) => (calls.push(['post', ...a]), { pullRequestId: 1 }) };
+  return {
+    calls,
+    get: async (...a) => (calls.push(['get', ...a]), { value: [] }),
+    post: async (...a) => (calls.push(['post', ...a]), { pullRequestId: 1 }),
+    patch: async (...a) => (calls.push(['patch', ...a]), { pullRequestId: 1 }),
+  };
 }
 
 describe('pullrequests core', () => {
@@ -18,6 +23,24 @@ describe('pullrequests core', () => {
     expect(body).not.toHaveProperty('completionOptions');
     expect(body).not.toHaveProperty('autoCompleteSetBy');
     expect(JSON.stringify(body)).not.toMatch(/deleteSourceBranch/);
+  });
+
+  it('update sends only the given fields and never a status', async () => {
+    const api = stubApi();
+    await pr.update({ api }, 'app', 12, { description: 'nova descrição' });
+    const [, path, body] = api.calls.find((c) => c[0] === 'patch');
+    expect(path).toBe('/git/repositories/app/pullrequests/12');
+    expect(body).toEqual({ description: 'nova descrição' });
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('completionOptions');
+  });
+
+  it('update normalizes a new target ref', async () => {
+    const api = stubApi();
+    await pr.update({ api }, 'app', 12, { targetRef: 'Development', isDraft: false });
+    const [, , body] = api.calls.find((c) => c[0] === 'patch');
+    expect(body.targetRefName).toBe('refs/heads/Development');
+    expect(body.isDraft).toBe(false);
   });
 
   it('list passes status search criteria', async () => {

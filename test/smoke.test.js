@@ -9,7 +9,7 @@ function fakeServer() {
 }
 
 describe('tool surface', () => {
-  it('registers exactly the expected 13 tools, none destructive', () => {
+  it('registers exactly the expected 14 tools, none destructive', () => {
     const server = fakeServer();
     const ctx = { api: {}, config: { repoAllowlist: [], protectedBranches: [] } };
     registerWorkItemTools(server, ctx);
@@ -17,7 +17,7 @@ describe('tool surface', () => {
     registerRepoTools(server, ctx);
     expect(server.names.sort()).toEqual([
       'branch_list', 'commit_list', 'pr_add_reviewers', 'pr_comment', 'pr_create',
-      'pr_get', 'pr_list', 'repo_list', 'wit_comment', 'wit_create', 'wit_get', 'wit_query', 'wit_update',
+      'pr_get', 'pr_list', 'pr_update', 'repo_list', 'wit_comment', 'wit_create', 'wit_get', 'wit_query', 'wit_update',
     ]);
     for (const forbidden of ['delete', 'abandon', 'complete', 'merge', 'remove']) {
       expect(server.names.some((n) => n.includes(forbidden))).toBe(false);

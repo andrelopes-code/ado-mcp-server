@@ -18,16 +18,26 @@ async function get({ api }, repo, prId) {
   return api.get(repoPath(repo, `/${prId}`));
 }
 
-async function create({ api }, repo, { sourceRef, targetRef, title, description, reviewers = [], workItemIds = [] }) {
+async function create({ api }, repo, { sourceRef, targetRef, title, description, reviewers = [], workItemIds = [], isDraft = false }) {
   const body = {
     sourceRefName: normalizeRef(sourceRef),
     targetRefName: normalizeRef(targetRef),
     title,
     description,
+    isDraft,
     reviewers: reviewers.map((id) => ({ id })),
     workItemRefs: workItemIds.map((id) => ({ id: String(id) })),
   };
   return api.post(repoPath(repo), body);
+}
+
+async function update({ api }, repo, prId, { title, description, isDraft, targetRef } = {}) {
+  const body = {};
+  if (title !== undefined) body.title = title;
+  if (description !== undefined) body.description = description;
+  if (isDraft !== undefined) body.isDraft = isDraft;
+  if (targetRef !== undefined) body.targetRefName = normalizeRef(targetRef);
+  return api.patch(repoPath(repo, `/${prId}`), body);
 }
 
 async function addReviewers({ api }, repo, prId, reviewerIds) {
@@ -39,4 +49,4 @@ async function comment({ api }, repo, prId, text) {
   return api.post(repoPath(repo, `/${prId}/threads`), body);
 }
 
-export { list, get, create, addReviewers, comment, normalizeRef };
+export { list, get, create, update, addReviewers, comment, normalizeRef };

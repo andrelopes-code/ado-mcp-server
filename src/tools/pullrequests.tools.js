@@ -36,19 +36,45 @@ function registerPullRequestTools(server, ctx) {
       description: z.string().optional(),
       reviewers: z.array(z.string()).optional().describe('ids (GUID) de reviewers'),
       workItemIds: z.array(z.number()).optional(),
+      isDraft: z.boolean().optional().describe('cria o PR como rascunho (draft)'),
       confirm: z.boolean().optional(),
     },
-  }, async ({ repo, source, target, title, description, reviewers, workItemIds, confirm }) => {
+  }, async ({ repo, source, target, title, description, reviewers, workItemIds, isDraft, confirm }) => {
     assertRepoAllowed(ctx.config, repo);
     const preview = {
-      action: 'create_pr', repo, source, target, title,
+      action: 'create_pr', repo, source, target, title, isDraft: isDraft ?? false,
       reviewers: reviewers ?? [], workItemIds: workItemIds ?? [],
       note: isProtectedBranch(ctx.config, target)
         ? `⚠ target '${target}' é branch protegida — PR permitido; o merge continua manual no web UI.`
         : undefined,
     };
     return runWrite({ ctx, tool: 'pr_create', args: { repo, source, target }, confirm, preview,
-      execute: () => pr.create(ctx, repo, { sourceRef: source, targetRef: target, title, description, reviewers, workItemIds }) });
+      execute: () => pr.create(ctx, repo, { sourceRef: source, targetRef: target, title, description, reviewers, workItemIds, isDraft }) });
+  });
+
+  server.registerTool('pr_update', {
+    description: 'Edita título, descrição, rascunho ou branch de destino de um PR. NÃO altera status: abandonar e mergear não passam por aqui. Escrita: write + confirm.',
+    inputSchema: {
+      repo: z.string(), prId: z.number(),
+      title: z.string().optional(),
+      description: z.string().optional(),
+      isDraft: z.boolean().optional().describe('false tira o PR de rascunho'),
+      target: z.string().optional().describe('nova branch de destino'),
+      confirm: z.boolean().optional(),
+    },
+  }, async ({ repo, prId, title, description, isDraft, target, confirm }) => {
+    assertRepoAllowed(ctx.config, repo);
+    if ([title, description, isDraft, target].every((field) => field === undefined)) {
+      return textResult('Nada a alterar: informe title, description, isDraft ou target.', true);
+    }
+    const preview = {
+      action: 'pr_update', repo, prId, title, description, isDraft, target,
+      note: target !== undefined && isProtectedBranch(ctx.config, target)
+        ? `⚠ target '${target}' é branch protegida — a troca é permitida; o merge continua manual no web UI.`
+        : undefined,
+    };
+    return runWrite({ ctx, tool: 'pr_update', args: { repo, prId }, confirm, preview,
+      execute: () => pr.update(ctx, repo, prId, { title, description, isDraft, targetRef: target }) });
   });
 
   server.registerTool('pr_add_reviewers', {
