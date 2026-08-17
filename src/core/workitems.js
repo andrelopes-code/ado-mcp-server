@@ -5,29 +5,41 @@ const PRESETS = {
   my_recent: "SELECT [System.Id] FROM WorkItems WHERE [System.AssignedTo] = @Me ORDER BY [System.ChangedDate] DESC",
 };
 
-const DEFAULT_FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AssignedTo', 'System.TeamProject'];
+const PROJECT_FIELD = 'System.TeamProject';
+const DEFAULT_FIELDS = ['System.Id', 'System.Title', 'System.State', 'System.WorkItemType', 'System.AssignedTo', PROJECT_FIELD];
 
-async function query({ api, config }, { wiql, preset }) {
-  const q = wiql || PRESETS[preset];
-  if (!q) throw new Error('Informe wiql ou um preset válido.');
-  const res = await api.post('/wit/wiql', { query: q });
-  const ids = (res.workItems || []).map((w) => w.id).slice(0, 50);
-  if (!ids.length) return [];
-  return getMany({ api, config }, ids, DEFAULT_FIELDS);
+// A REST API cai a 400 acima disso, e o ADO ignora ids excedentes em silêncio.
+const MAX_IDS = 200;
+
+function assertProjectScope(config, items) {
+  const foreign = items.filter((it) => it.fields?.[PROJECT_FIELD] !== config.project);
+  if (foreign.length) {
+    throw new Error(`Work item(s) fora do projeto '${config.project}': ${foreign.map((it) => it.id).join(', ')}.`);
+  }
+  return items;
 }
 
-async function getMany({ api }, ids, fields = DEFAULT_FIELDS) {
-  const res = await api.get('/wit/workitems', { params: { ids: ids.join(','), fields: fields.join(',') } });
-  return res.value || [];
+async function query(ctx, { wiql, preset }) {
+  const q = wiql || PRESETS[preset];
+  if (!q) throw new Error('Informe wiql ou um preset válido.');
+  const res = await ctx.api.post('/wit/wiql', { query: q });
+  const ids = (res.workItems || []).map((w) => w.id).slice(0, 50);
+  if (!ids.length) return [];
+  return getMany(ctx, ids);
+}
+
+// Choke point de leitura: o escopo de projeto é imposto aqui para que WIQL arbitrário,
+// getOne e wit_get herdem o mesmo limite de blast radius.
+async function getMany({ api, config }, ids, fields = DEFAULT_FIELDS) {
+  if (ids.length > MAX_IDS) throw new Error(`Máximo de ${MAX_IDS} ids por consulta; recebidos ${ids.length}.`);
+  const wanted = fields.includes(PROJECT_FIELD) ? fields : [...fields, PROJECT_FIELD];
+  const res = await api.get('/wit/workitems', { params: { ids: ids.join(','), fields: wanted.join(',') } });
+  return assertProjectScope(config, res.value || []);
 }
 
 async function getOne(ctx, id) {
   const [item] = await getMany(ctx, [id]);
   if (!item) throw new Error(`Work item ${id} não encontrado.`);
-  const proj = item.fields?.['System.TeamProject'];
-  if (proj !== ctx.config.project) {
-    throw new Error(`Work item ${id} pertence ao projeto '${proj ?? 'desconhecido'}', fora de '${ctx.config.project}'.`);
-  }
   return item;
 }
 
@@ -55,4 +67,4 @@ async function comment({ api }, { id, text }) {
   return api.patch(`/wit/workitems/${id}`, [{ op: 'add', path: '/fields/System.History', value: text }], JSON_PATCH_HEADERS);
 }
 
-export { query, getMany, getOne, create, update, comment };
+export { query, getMany, getOne, create, update, comment, MAX_IDS };

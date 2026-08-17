@@ -13,15 +13,40 @@ function stubApi(over = {}) {
 const config = { project: 'Proj', url: 'http://srv/col' };
 
 describe('workitems core', () => {
+  const inProject = (id) => ({ id, fields: { 'System.TeamProject': 'Proj' } });
+
   it('query uses preset WIQL then hydrates returned ids', async () => {
     const api = stubApi({
       post: () => ({ workItems: [{ id: 10 }, { id: 11 }] }),
-      get: () => ({ value: [{ id: 10 }, { id: 11 }] }),
+      get: () => ({ value: [inProject(10), inProject(11)] }),
     });
     const items = await wit.query({ api, config }, { preset: 'my_active' });
     expect(items).toHaveLength(2);
     const wiqlCall = api.calls.find((c) => c[0] === 'post' && c[1] === '/wit/wiql');
     expect(wiqlCall[2].query).toMatch(/@Me/);
+  });
+
+  it('query rejects results that a WIQL pulled in from another project', async () => {
+    const api = stubApi({
+      post: () => ({ workItems: [{ id: 10 }, { id: 99 }] }),
+      get: () => ({ value: [inProject(10), { id: 99, fields: { 'System.TeamProject': 'Outro' } }] }),
+    });
+    await expect(wit.query({ api, config }, { wiql: "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'Outro'" }))
+      .rejects.toThrow(/fora do projeto 'Proj': 99/);
+  });
+
+  it('getMany always asks for the project field, even with custom fields', async () => {
+    const api = stubApi({ get: () => ({ value: [inProject(1)] }) });
+    await wit.getMany({ api, config }, [1], ['System.Title']);
+    const call = api.calls.find((c) => c[0] === 'get');
+    expect(call[2].params.fields).toContain('System.TeamProject');
+  });
+
+  it('getMany refuses more ids than the ADO limit before calling the API', async () => {
+    const api = stubApi();
+    const ids = Array.from({ length: wit.MAX_IDS + 1 }, (_, i) => i + 1);
+    await expect(wit.getMany({ api, config }, ids)).rejects.toThrow(/Máximo de 200 ids/);
+    expect(api.calls).toHaveLength(0);
   });
 
   it('create builds a json-patch with title and parent relation', async () => {
@@ -57,6 +82,6 @@ describe('workitems core', () => {
 
   it('getOne rejects a work item from another project', async () => {
     const api = stubApi({ get: () => ({ value: [{ id: 9, fields: { 'System.TeamProject': 'Outro' } }] }) });
-    await expect(wit.getOne({ api, config }, 9)).rejects.toThrow(/fora de 'Proj'/);
+    await expect(wit.getOne({ api, config }, 9)).rejects.toThrow(/fora do projeto 'Proj': 9/);
   });
 });
