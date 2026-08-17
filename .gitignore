@@ -1,3 +1,10 @@
 node_modules/
 .env
+.env.*
+!.env.example
 *.log
+*.log.1
+ado-mcp-audit*
+test-*-audit.log
+test-live-*env*
+coverage/
