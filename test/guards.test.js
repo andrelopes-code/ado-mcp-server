@@ -48,6 +48,36 @@ describe('runWrite', () => {
     const logged = JSON.parse((await readFile(audit, 'utf8')).trim());
     expect(logged.tool).toBe('wit_create');
     expect(logged.resultId).toBe(99);
+    expect(logged.outcome).toBe('applied');
+  });
+
+  it('audits a write blocked by read mode', async () => {
+    await runWrite({ ctx: { config: cfg() }, tool: 'pr_create', args: { repo: 'app' }, confirm: true, preview, execute: async () => ({ id: 1 }) });
+    const logged = JSON.parse((await readFile(audit, 'utf8')).trim());
+    expect(logged.outcome).toBe('blocked');
+    expect(logged.tool).toBe('pr_create');
+  });
+
+  it('audits a write that the API rejected, and still surfaces the error', async () => {
+    const run = runWrite({
+      ctx: { config: cfg({ mode: 'write' }) }, tool: 'wit_update', args: { id: 4 }, confirm: true, preview,
+      execute: async () => { throw new Error('ADO 400: campo inválido'); },
+    });
+    await expect(run).rejects.toThrow(/campo inválido/);
+    const logged = JSON.parse((await readFile(audit, 'utf8')).trim());
+    expect(logged.outcome).toBe('failed');
+    expect(logged.reason).toMatch(/campo inválido/);
+  });
+
+  it('reports the write as applied with a warning when auditing fails', async () => {
+    // Diretório inexistente: appendFile falha, mas a mutação já foi enviada ao ADO.
+    const broken = cfg({ mode: 'write', auditLog: './no-such-dir/audit.log' });
+    let ran = false;
+    const res = await runWrite({ ctx: { config: broken }, tool: 'wit_create', args: {}, confirm: true, preview, execute: async () => { ran = true; return { id: 7 }; } });
+    expect(ran).toBe(true);
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toMatch(/APLICADO/);
+    expect(res.content[0].text).toMatch(/auditoria falhou/);
   });
 });
 

@@ -1,4 +1,4 @@
-import { auditWrite } from '../audit.js';
+import { auditSafe } from '../audit.js';
 import { currentMode } from '../config.js';
 
 const fmt = (v) => JSON.stringify(v, null, 2);
@@ -21,14 +21,28 @@ function isProtectedBranch(config, ref) {
 
 async function runWrite({ ctx, tool, args, confirm, preview, execute }) {
   if (currentMode(ctx.config.mode, ctx.config.envPath) !== 'write') {
+    await auditSafe(ctx.config, { tool, args, outcome: 'blocked', reason: 'ADO_MODE=read' });
     return textResult(`Escrita BLOQUEADA — ADO_MODE=read. Nada foi enviado.\n\nO que seria feito:\n${fmt(preview)}`, true);
   }
   if (confirm !== true) {
     return textResult(`PREVIEW — nada foi enviado. Reenvie a chamada com confirm:true para aplicar.\n\n${fmt(preview)}`);
   }
-  const result = await execute();
-  await auditWrite(ctx.config, { tool, args, resultId: result?.id ?? result?.pullRequestId ?? null });
-  return textResult(`APLICADO ✔\n\n${fmt(result)}`);
+
+  let result;
+  try {
+    result = await execute();
+  } catch (err) {
+    await auditSafe(ctx.config, { tool, args, outcome: 'failed', reason: err.message });
+    throw err;
+  }
+
+  // A mutação já foi enviada: uma falha de auditoria vira aviso, nunca um erro que
+  // faria o chamador acreditar que nada aconteceu.
+  const auditError = await auditSafe(ctx.config, {
+    tool, args, outcome: 'applied', resultId: result?.id ?? result?.pullRequestId ?? null,
+  });
+  const warning = auditError ? `\n\n⚠ A escrita foi aplicada, mas a auditoria falhou: ${auditError}` : '';
+  return textResult(`APLICADO ✔${warning}\n\n${fmt(result)}`);
 }
 
 export { textResult, assertRepoAllowed, isProtectedBranch, runWrite };

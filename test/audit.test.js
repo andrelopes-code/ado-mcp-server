@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { readFile, rm } from 'node:fs/promises';
-import { auditWrite } from '../src/audit.js';
+import { readFile, rm, writeFile, stat } from 'node:fs/promises';
+import { auditWrite, auditSafe, MAX_BYTES } from '../src/audit.js';
 
 const file = './test-audit.log';
-afterEach(() => rm(file, { force: true }));
+afterEach(() => Promise.all([rm(file, { force: true }), rm(`${file}.1`, { force: true })]));
 
 describe('auditWrite', () => {
   it('appends a JSON line with a timestamp', async () => {
@@ -15,5 +15,20 @@ describe('auditWrite', () => {
     expect(first.tool).toBe('wit_create');
     expect(first.resultId).toBe(42);
     expect(typeof first.ts).toBe('string');
+  });
+
+  it('rotates to .1 once the log passes the size cap', async () => {
+    await writeFile(file, 'x'.repeat(MAX_BYTES), 'utf8');
+    await auditWrite({ auditLog: file }, { tool: 'wit_create', resultId: 1 });
+    expect((await stat(`${file}.1`)).size).toBe(MAX_BYTES);
+    const lines = (await readFile(file, 'utf8')).trim().split('\n');
+    expect(lines).toHaveLength(1);
+  });
+});
+
+describe('auditSafe', () => {
+  it('returns null on success and the error message on failure', async () => {
+    expect(await auditSafe({ auditLog: file }, { tool: 't' })).toBeNull();
+    expect(await auditSafe({ auditLog: './no-such-dir/audit.log' }, { tool: 't' })).toMatch(/ENOENT/);
   });
 });
