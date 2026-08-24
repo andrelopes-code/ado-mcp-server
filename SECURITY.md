@@ -17,11 +17,15 @@ Layers, from outermost in:
    on each write, so revoking write access takes effect on the next call without a restart. The
    `.env` file is outside the model's reach.
 2. **Preview → confirm.** Every write tool returns a preview and applies nothing until it is called
-   again with `confirm: true`.
+   again with `confirm: true`. Work item creates, updates and links send that preview to the server
+   with `validateOnly=true`, so process-rule violations surface before anything is persisted.
 3. **No destructive surface.** There is no delete, no abandon and no merge. `pr_update` deliberately
    omits `status`, because the same `PATCH` endpoint accepts `abandoned` and `completed`.
-4. **Blast radius.** A single project, enforced server-side on every work item read; an optional
-   repo allowlist enforced on every repo and PR tool.
+4. **Blast radius.** One default project, enforced server-side on every work item read and on every
+   link target. Reaching another project requires both an explicit `project` argument and that name
+   in `ADO_PROJECT_ALLOWLIST`; the call fails before any request otherwise. Optional allowlists cover
+   repos, work item types, area paths and attachment extensions. HTML fields carrying `script`,
+   `iframe`, inline handlers or `javascript:` are rejected before the patch is built.
 5. **Audit trail.** Applied, blocked and failed writes are appended to `ado-mcp-audit.log`. A failure
    to write the audit trail never masks a mutation that already reached the server.
 

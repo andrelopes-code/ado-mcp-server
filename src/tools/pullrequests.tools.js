@@ -1,12 +1,14 @@
 import { z } from 'zod';
 import * as pr from '../core/pullrequests.js';
-import { textResult, runWrite, assertRepoAllowed, isProtectedBranch } from './guards.js';
+import { textResult, runWrite, assertRepoAllowed, isProtectedBranch, scoped } from './guards.js';
+
+const project = z.string().optional().describe('Projeto alvo; default = DEVOPS_PROJECT. Outros exigem ADO_PROJECT_ALLOWLIST.');
 
 function slimPr(p) {
   return { id: p.pullRequestId, title: p.title, status: p.status, source: p.sourceRefName, target: p.targetRefName, createdBy: p.createdBy?.displayName };
 }
 
-function registerPullRequestTools(server, ctx) {
+function registerPullRequestTools(server, rootCtx) {
   server.registerTool('pr_list', {
     description: 'Lista pull requests de um repo. Leitura.',
     inputSchema: {
@@ -14,8 +16,10 @@ function registerPullRequestTools(server, ctx) {
       status: z.enum(['active', 'completed', 'abandoned', 'all']).optional(),
       creatorId: z.string().optional(),
       target: z.string().optional(),
+      project,
     },
-  }, async ({ repo, status, creatorId, target }) => {
+  }, async ({ repo, status, creatorId, target, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
     const items = await pr.list(ctx, repo, { status, creatorId, targetRef: target });
     return textResult(JSON.stringify(items.map(slimPr), null, 2));
@@ -23,8 +27,9 @@ function registerPullRequestTools(server, ctx) {
 
   server.registerTool('pr_get', {
     description: 'Detalha um pull request. Leitura.',
-    inputSchema: { repo: z.string(), prId: z.number() },
-  }, async ({ repo, prId }) => {
+    inputSchema: { repo: z.string(), prId: z.number(), project },
+  }, async ({ repo, prId, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
     return textResult(JSON.stringify(await pr.get(ctx, repo, prId), null, 2));
   });
@@ -38,11 +43,13 @@ function registerPullRequestTools(server, ctx) {
       workItemIds: z.array(z.number()).optional(),
       isDraft: z.boolean().optional().describe('cria o PR como rascunho (draft)'),
       confirm: z.boolean().optional(),
+      project,
     },
-  }, async ({ repo, source, target, title, description, reviewers, workItemIds, isDraft, confirm }) => {
+  }, async ({ repo, source, target, title, description, reviewers, workItemIds, isDraft, confirm, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
     const preview = {
-      action: 'create_pr', repo, source, target, title, isDraft: isDraft ?? false,
+      action: 'create_pr', project: ctx.config.project, repo, source, target, title, isDraft: isDraft ?? false,
       reviewers: reviewers ?? [], workItemIds: workItemIds ?? [],
       note: isProtectedBranch(ctx.config, target)
         ? `⚠ target '${target}' é branch protegida — PR permitido; o merge continua manual no web UI.`
@@ -61,14 +68,16 @@ function registerPullRequestTools(server, ctx) {
       isDraft: z.boolean().optional().describe('false tira o PR de rascunho'),
       target: z.string().optional().describe('nova branch de destino'),
       confirm: z.boolean().optional(),
+      project,
     },
-  }, async ({ repo, prId, title, description, isDraft, target, confirm }) => {
+  }, async ({ repo, prId, title, description, isDraft, target, confirm, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
     if ([title, description, isDraft, target].every((field) => field === undefined)) {
       return textResult('Nada a alterar: informe title, description, isDraft ou target.', true);
     }
     const preview = {
-      action: 'pr_update', repo, prId, title, description, isDraft, target,
+      action: 'pr_update', project: ctx.config.project, repo, prId, title, description, isDraft, target,
       note: target !== undefined && isProtectedBranch(ctx.config, target)
         ? `⚠ target '${target}' é branch protegida — a troca é permitida; o merge continua manual no web UI.`
         : undefined,
@@ -79,20 +88,22 @@ function registerPullRequestTools(server, ctx) {
 
   server.registerTool('pr_add_reviewers', {
     description: 'Adiciona reviewers a um PR. Escrita: write + confirm.',
-    inputSchema: { repo: z.string(), prId: z.number(), reviewers: z.array(z.string()).min(1), confirm: z.boolean().optional() },
-  }, async ({ repo, prId, reviewers, confirm }) => {
+    inputSchema: { repo: z.string(), prId: z.number(), reviewers: z.array(z.string()).min(1), confirm: z.boolean().optional(), project },
+  }, async ({ repo, prId, reviewers, confirm, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
-    const preview = { action: 'add_reviewers', repo, prId, reviewers };
+    const preview = { action: 'add_reviewers', project: ctx.config.project, repo, prId, reviewers };
     return runWrite({ ctx, tool: 'pr_add_reviewers', args: { repo, prId }, confirm, preview,
       execute: () => pr.addReviewers(ctx, repo, prId, reviewers) });
   });
 
   server.registerTool('pr_comment', {
     description: 'Comenta num PR (abre thread). Escrita: write + confirm.',
-    inputSchema: { repo: z.string(), prId: z.number(), text: z.string(), confirm: z.boolean().optional() },
-  }, async ({ repo, prId, text, confirm }) => {
+    inputSchema: { repo: z.string(), prId: z.number(), text: z.string(), confirm: z.boolean().optional(), project },
+  }, async ({ repo, prId, text, confirm, project: proj }) => {
+    const ctx = scoped(rootCtx, proj);
     assertRepoAllowed(ctx.config, repo);
-    const preview = { action: 'pr_comment', repo, prId, text };
+    const preview = { action: 'pr_comment', project: ctx.config.project, repo, prId, text };
     return runWrite({ ctx, tool: 'pr_comment', args: { repo, prId }, confirm, preview,
       execute: () => pr.comment(ctx, repo, prId, text) });
   });

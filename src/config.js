@@ -10,6 +10,7 @@ loadEnv({ path: ENV_PATH, quiet: true });
 
 const REQUIRED = ['DEVOPS_URL', 'DEVOPS_PROJECT', 'DEVOPS_PAT'];
 const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_ATTACH_MAX_MB = 25;
 
 function toMode(value) {
   return value === 'write' ? 'write' : 'read';
@@ -23,6 +24,11 @@ function splitList(value, fallback = []) {
 function toTimeout(value) {
   const ms = Number(value);
   return Number.isFinite(ms) && ms > 0 ? ms : DEFAULT_TIMEOUT_MS;
+}
+
+function toBytes(value, fallbackMb) {
+  const mb = Number(value);
+  return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
 }
 
 function readConfig(env = process.env) {
@@ -40,6 +46,12 @@ function readConfig(env = process.env) {
     pat: env.DEVOPS_PAT,
     apiVersion: env.API_VERSION || '6.0',
     mode: toMode(env.ADO_MODE),
+    // O projeto do .env é sempre permitido; a allowlist só amplia o alcance de `project` nas tools.
+    projectAllowlist: splitList(env.ADO_PROJECT_ALLOWLIST),
+    witTypeAllowlist: splitList(env.ADO_WIT_TYPE_ALLOWLIST),
+    witAreaAllowlist: splitList(env.ADO_WIT_AREA_ALLOWLIST),
+    attachMaxBytes: toBytes(env.ADO_ATTACH_MAX_MB, DEFAULT_ATTACH_MAX_MB),
+    attachExtAllowlist: splitList(env.ADO_ATTACH_EXT_ALLOWLIST).map((e) => e.toLowerCase().replace(/^\./, '')),
     repoAllowlist: splitList(env.ADO_REPO_ALLOWLIST),
     protectedBranches: splitList(env.ADO_PROTECTED_BRANCHES, ['main', 'master', 'develop', 'release/*']),
     auditLog: resolve(SERVER_DIR, env.ADO_AUDIT_LOG || 'ado-mcp-audit.log'),

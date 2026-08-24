@@ -2,7 +2,7 @@
 
 **Data:** 2026-07-16
 **Autor:** André Lopes
-**Status:** spec aprovada (aguardando revisão) → plano de implementação
+**Status:** implementado; atualizado na extensão de work items (gestão completa) e no override de projeto
 
 Servidor MCP local que dá ao Claude Code acesso controlado ao **Azure DevOps Server on-premise** via REST API, priorizando segurança: o Claude não pode destruir nada porque as operações destrutivas **não existem no código**.
 
@@ -17,6 +17,7 @@ Este projeto é o "MCP confiável de on-prem" que falta: um wrapper fino, tipado
 ## 2. Objetivos
 
 - Dar ao Claude Code tools nativas para o fluxo diário: **work items (cards), pull requests, repos/branches**.
+- Cobrir a gestão de work item de ponta a ponta: hierarquia (epic → feature → item), links, discussão, campos ricos, tags, área/iteração, anexos e metadados do processo.
 - Ser **robusto** e **impossível de causar estrago irreversível** no DevOps real.
 - Rodar **isolado** de qualquer repositório de trabalho (projeto próprio, `.env` próprio, git próprio).
 - Uso **pessoal**, local, sob a conta do próprio desenvolvedor.
@@ -53,14 +54,19 @@ Servidor MCP stdio em Node. Separação **core (REST puro) / tools (adaptador MC
     ├── audit.js                   append no audit log (timestamp, tool, params, outcome) + rotação
     ├── core/                     REST puro — ZERO conhecimento de MCP, reusável
     │   ├── client.js             axios: base URL, Basic-PAT, api-version, timeout, mapeamento de erro
-    │   ├── workitems.js          query/get/create/update/comment + escopo de projeto
+    │   ├── workitems.js          query/tree/get/create/update + escopo de projeto, tags, rev test, $batch
+    │   ├── witlinks.js           relações, artifact links (vstfs), anexos
+    │   ├── witdiscussion.js      comentários (API de comments + fallback System.History) e revisões
+    │   ├── witmeta.js            tipos, estados, campos, categorias, relation types, áreas, iterações, tags
+    │   ├── projects.js           lista projetos da coleção (escopo organizacional)
     │   ├── pullrequests.js       list/get/create/update/add_reviewers/comment
     │   └── repos.js              list/branches/commits
     └── tools/                    adaptadores MCP finos: schema zod → chama core → aplica guardas
         ├── guards.js             allowlist, branch protegida, modo/confirm, auditoria
         ├── workitems.tools.js
         ├── pullrequests.tools.js
-        └── repos.tools.js
+        ├── repos.tools.js
+        └── projects.tools.js
 ```
 
 Fluxo de uma chamada:
@@ -91,10 +97,16 @@ Na prática, o gate de aprovação por-ação numa sessão interativa é o **pro
 ### Camada 4 — Preview → confirm em toda mutação
 Toda tool de escrita exige `confirm: true`. Sem isso, **não executa**: retorna o preview exato — método, URL, corpo/JSON-patch que enviaria, e os valores atuais dos campos que mudariam. Toda escrita é two-phase e visível; o prompt de permissão do Claude Code dispara na chamada com `confirm`.
 
+Em `wit_create`, `wit_update` e `wit_link` o preview também é submetido ao ADO com `validateOnly=true`: o servidor aplica as regras do processo e devolve o veredito **sem persistir**. Campo obrigatório ausente, transição de estado inválida ou valor fora de `allowedValues` aparecem no preview, não depois do `confirm`.
+
+`expectedRev` cobre o outro lado: um `test /rev` no início do patch faz a escrita inteira falhar se o item mudou entre a leitura e a confirmação.
+
 ### Camada 5 — Blast radius fixado
-- `DEVOPS_PROJECT` único no `.env`; requisições a ids de outro projeto são recusadas.
-- Allowlist opcional de repos (`ADO_REPO_ALLOWLIST`).
-- **Uma tool = uma entidade.** Sem endpoints de bulk/"update all": força N chamadas discretas, cada uma barrada individualmente, em vez de uma catastrófica.
+- `DEVOPS_PROJECT` é o projeto padrão e o único alcançável por default; o escopo é imposto na leitura de work item e em todo alvo de link.
+- Trocar de projeto exige o parâmetro `project` **e** o nome em `ADO_PROJECT_ALLOWLIST`. Fora dela, a chamada falha antes de qualquer request. `*` libera a coleção — escolha explícita de quem edita o `.env`, nunca default.
+- Allowlists opcionais de repo (`ADO_REPO_ALLOWLIST`), tipo de work item (`ADO_WIT_TYPE_ALLOWLIST`), area path (`ADO_WIT_AREA_ALLOWLIST`) e extensão/tamanho de anexo.
+- **Sem bulk dirigido por query.** Não existe "atualize tudo que a WIQL retornar": `wit_update` aceita uma lista **explícita** de ids, e o preview mostra o valor atual de cada um antes do `confirm`. O lote existe para mover um sprint inteiro sem N confirmações; o conjunto continua sendo escolhido por quem chama, não por um filtro do servidor.
+- Campos HTML (`System.Description`, critérios de aceite) são recusados quando contêm `script`, `iframe`, handler inline ou `javascript:` — o card é renderizado no navegador de todo mundo.
 
 ### Camada 6 — `pr_create` sem nenhuma opção destrutiva embutida
 `pr_create` **nunca** envia `completionOptions`, autocomplete, `deleteSourceBranch` nem override de policy — o corpo é montado só com source/target/título/descrição/reviewers/work items. Criar PR *para* `main` é normal e permitido (é o propósito do PR); o que não existe em lugar nenhum é merge ou delete. Quando `targetRef` casa `ADO_PROTECTED_BRANCHES` (default `main,master,develop,release/*`), o preview destaca "PR mirando branch protegida" para o humano notar antes do `confirm` — é sinalização, não bloqueio, já que não há mutação da branch.
@@ -109,14 +121,23 @@ Validação zod na entrada; timeouts em toda request; retry só em leitura idemp
 
 Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MODE=write`, exige `confirm`, gera audit).
 
+Toda tool aceita `project?`; sem ele vale `DEVOPS_PROJECT` (§7).
+
 ### Work items
 | Tool | Tipo | Params principais | Guardas |
 |---|---|---|---|
-| `wit_query` | R | `wiql` (string) **ou** `preset` (`my_active`/`my_recent`) | recusa resultado fora do projeto |
-| `wit_get` | R | `ids` (array, máx. 200), `fields?` | recusa id fora do projeto |
-| `wit_create` | W | `type`, `title`, `fields?`, `parentId?` | confirm; sem bulk |
-| `wit_update` | W | `id`, `fields?`, `state?` | confirm; 1 item; recusa id fora do projeto; sem delete |
-| `wit_comment` | W | `id`, `text` | confirm; via `System.History` (estável em qualquer api-version) |
+| `wit_query` | R | `wiql` **ou** `preset` (`my_active`/`my_recent`) **ou** `queryId`, `top?`, `fields?`, `expand?` | recusa resultado fora do projeto |
+| `wit_get` | R | `ids` (máx. 200), `fields?`, `expand?`, `asOf?` | recusa id fora do projeto |
+| `wit_tree` | R | `wiql` (`FROM WorkItemLinks`), `top?` | recusa item fora do projeto; teto de 200 nós |
+| `wit_comments` | R | `id`, `top?` | recusa id fora do projeto; fallback `System.History` |
+| `wit_history` | R | `id`, `top?` | recusa id fora do projeto |
+| `wit_meta` | R | `kind` (`types`/`states`/`fields`/`categories`/`relationtypes`/`areas`/`iterations`/`tags`), `type?`, `depth?` | leitura de metadados; `relationtypes` é organizacional |
+| `wit_create` | W | `type`, `title`, `fields?`, `parentId?`, `relations?`, `tags?`, `areaPath?`, `iterationPath?` | confirm; `validateOnly` no preview; allowlist de tipo e área; HTML sanitizado; alvos de link validados antes do preview |
+| `wit_update` | W | `id` **ou** `ids`, `fields?`, `state?`, `tags?`, `expectedRev?` | confirm; ids explícitos; recusa id fora do projeto; `test /rev`; sem delete |
+| `wit_link` | W | `id`, `rel`, `targetId?`/`url?`/`repo?`+`artifactValue?` | confirm; alvo validado no projeto; artifact link montado a partir dos GUIDs |
+| `wit_unlink` | W | `id`, `rel`, `targetId?`/`url?` | confirm; índice resolvido na hora; recusa correspondência ambígua |
+| `wit_comment` | W | `id`, `text` | confirm; API de comments com fallback `System.History` |
+| `wit_attach` | W | `id`, `filePath`, `comment?` | confirm; limite de tamanho e extensão checados no preview; upload só após `confirm` |
 
 ### Pull requests
 | Tool | Tipo | Params principais | Guardas |
@@ -130,6 +151,11 @@ Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MO
 
 > **Ausente por decisão de design:** `pr_complete`, `pr_abandon`. `pr_update` edita metadados e nada mais: o mesmo `PATCH` da API aceita `status: abandoned` (fecha) e `status: completed` (mergeia), então o campo simplesmente não é montado.
 
+### Projetos
+| Tool | Tipo | Params principais | Guardas |
+|---|---|---|---|
+| `project_list` | R | — | marca quais projetos o `project` das demais tools aceita |
+
 ### Repos / branches
 | Tool | Tipo | Params principais | Guardas |
 |---|---|---|---|
@@ -142,10 +168,15 @@ Legenda: **R** = leitura (sempre disponível) · **W** = escrita (só em `ADO_MO
 | Var | Default | Papel |
 |---|---|---|
 | `DEVOPS_URL` | — (obrigatório) | base da coleção on-prem, ex. `http://servidor/colecao` |
-| `DEVOPS_PROJECT` | — (obrigatório) | projeto único (blast radius) |
+| `DEVOPS_PROJECT` | — (obrigatório) | projeto padrão (blast radius) |
 | `DEVOPS_PAT` | — (obrigatório) | PAT mínimo dedicado |
 | `API_VERSION` | `6.0` | versão da REST API (comprovada no on-prem) |
 | `ADO_MODE` | `read` | `read` (só leitura) \| `write` (habilita escritas) |
+| `ADO_PROJECT_ALLOWLIST` | vazio (só `DEVOPS_PROJECT`) | outros projetos aceitos no parâmetro `project`; `*` libera a coleção |
+| `ADO_WIT_TYPE_ALLOWLIST` | vazio (todos) | tipos que `wit_create` pode criar |
+| `ADO_WIT_AREA_ALLOWLIST` | vazio (todo o projeto) | area paths onde a escrita é permitida, por prefixo |
+| `ADO_ATTACH_MAX_MB` | `25` | teto de tamanho por anexo |
+| `ADO_ATTACH_EXT_ALLOWLIST` | vazio (todas) | extensões de anexo permitidas |
 | `ADO_REPO_ALLOWLIST` | vazio (todos) | lista separada por vírgula de repos permitidos |
 | `ADO_PROTECTED_BRANCHES` | `main,master,develop,release/*` | branches sob guarda reforçada |
 | `ADO_AUDIT_LOG` | `./ado-mcp-audit.log` | caminho da trilha de auditoria |
@@ -168,8 +199,10 @@ Node 20 (nvm), `@modelcontextprotocol/sdk`, `axios`, `zod` (schemas das tools), 
 ## 10. Fora de escopo desta versão (adiado)
 
 - **Semente de reúso:** o `core/` é REST puro. Se virar CLI manual ou serviço de time, adiciona-se um front novo (`bin/ado.js` ou HTTP) sobre o mesmo core, sem reescrever. Não construir agora.
-- **`wit_link_artifact`** (linkar work item a um commit/PR avulso depois do fato): exige montar URL `vstfs:///Git/...` com project-id + repo-id + encode — frágil no on-prem. O caso real de PR↔card já é coberto por `pr_create.workItemIds`; commit↔card pela mensagem de commit (`#id`). Adicionar só quando surgir a necessidade concreta de linkar retroativamente.
+- **Boards e backlogs** (`/work/boards`, `/work/backlogs`): colunas de board e ordenação de backlog não têm tool. A informação equivalente sai de `System.BoardColumn` via `wit_get`.
+- **Lixeira** (`DELETE /wit/workitems`, `/wit/recyclebin`): excluir e restaurar continuam fora por §3, mesmo sendo reversíveis na API.
+- **Editar/remover comentário** e **mover work item entre projetos ou tipos**: fora da superfície; a discussão é append-only e o item não muda de projeto.
 
 ## 11. Testes
 
-Vitest opcional sobre o `core/` com axios mockado: monta de URL, header de auth, JSON-patch de create/update, mapeamento de erro, e — crítico — que **guardas rejeitam** (escrita em `ADO_MODE=read`, mutação sem `confirm`, id fora do projeto, repo fora da allowlist). Gerar só quando solicitado.
+Vitest sobre `core/` e `tools/` com o cliente HTTP dublado: montagem de URL, header de auth, JSON-patch de create/update/link, resolução de artifact link, fallback da API de comments, achatamento das áreas, e — crítico — que **guardas rejeitam**: escrita em `ADO_MODE=read`, mutação sem `confirm`, id ou alvo de link fora do projeto, projeto fora da allowlist, tipo fora da allowlist, HTML executável, anexo acima do limite, repo fora da allowlist.
